@@ -8,7 +8,7 @@ import hashlib
 
 from FMDNCrypto.foreign_tracker_cryptor import decrypt
 from KeyBackup.cloud_key_decryptor import decrypt_eik, decrypt_aes_gcm
-from NovaApi.ExecuteAction.LocateTracker.decrypted_location import WrappedLocation
+from NovaApi.ExecuteAction.LocateTracker.decrypted_location import LocationRecord
 from ProtoDecoders import DeviceUpdate_pb2
 from ProtoDecoders import Common_pb2
 from ProtoDecoders.DeviceUpdate_pb2 import DeviceRegistration
@@ -19,8 +19,12 @@ from SpotApi.GetEidInfoForE2eeDevices.get_eid_info_request import get_eid_info
 from SpotApi.GetEidInfoForE2eeDevices.get_owner_key import get_owner_key
 
 
+class IdentityKeyError(Exception):
+    """The identity key of a tracker could not be decrypted with the current owner key."""
+
+
 def create_google_maps_link(latitude, longitude):
-    try:  
+    try:
         latitude = float(latitude)
         longitude = float(longitude)
         if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
@@ -28,7 +32,7 @@ def create_google_maps_link(latitude, longitude):
     except ValueError as e:
         return f"Error: {e}" #more descriptive error message for the user
     base_url = "https://www.google.com/maps/search/?api=1"
-    query_params = f"query={latitude},{longitude}"  
+    query_params = f"query={latitude},{longitude}"
 
     return f"{base_url}&{query_params}"
 
@@ -54,20 +58,15 @@ def retrieve_identity_key(device_registration: DeviceRegistration) -> bytes:
         e2eeData = get_eid_info()
         current_owner_key_version = e2eeData.encryptedOwnerKeyAndMetadata.ownerKeyVersion
 
-        print("")
-        print("-" * 40)
-        print("Attention:")
-        print("-" * 40)
-
+        # Raise instead of exit(1), so one broken tracker does not terminate the whole program
         if encrypted_user_secrets.ownerKeyVersion < current_owner_key_version:
-            print(f"Failed to decrypt E2EE data. This tracker was encrypted with owner key version {encrypted_user_secrets.ownerKeyVersion}, but the current owner key version is {current_owner_key_version}.\nThis happens if you reset your end-to-end-encrypted data in the past.\nThe tracker cannot be decrypted anymore, and it is recommended to remove it in the Find My Device app.")
-            exit(1)
+            raise IdentityKeyError(f"Failed to decrypt E2EE data. This tracker was encrypted with owner key version {encrypted_user_secrets.ownerKeyVersion}, but the current owner key version is {current_owner_key_version}.\nThis happens if you reset your end-to-end-encrypted data in the past.\nThe tracker cannot be decrypted anymore, and it is recommended to remove it in the Find My Device app.") from e
         else:
-            print(f"Failed to decrypt identity key encrypted with owner key version {encrypted_user_secrets.ownerKeyVersion}, current owner key version is {current_owner_key_version}.\nThis may happen if you reset your end-to-end-encrypted data. To resolve this issue, open the folder 'Auth' and delete the file 'secrets.json'.")
-            exit(1)
+            raise IdentityKeyError(f"Failed to decrypt identity key encrypted with owner key version {encrypted_user_secrets.ownerKeyVersion}, current owner key version is {current_owner_key_version}.\nThis may happen if you reset your end-to-end-encrypted data. To resolve this issue, open the folder 'Auth' and delete the file 'secrets.json'.") from e
 
 
-def decrypt_location_response_locations(device_update_protobuf):
+def decrypt_location_records(device_update_protobuf) -> list[LocationRecord]:
+    """Decrypts all location reports of a device update, newest first."""
 
     device_registration = device_update_protobuf.deviceMetadata.information.deviceRegistration
 
@@ -87,23 +86,20 @@ def decrypt_location_response_locations(device_update_protobuf):
         network_locations.append(recent_location)
         network_locations_time.append(recent_location_time)
 
-    location_time_array = []
+    records = []
     for loc, time in zip(network_locations, network_locations_time):
 
         if loc.status == Common_pb2.Status.SEMANTIC:
-            print("Semantic Location Report")
-
-            wrapped_location = WrappedLocation(
-                decrypted_location=b'',
+            records.append(LocationRecord(
                 time=int(time.seconds),
-                accuracy=0,
                 status=loc.status,
                 is_own_report=True,
                 name=loc.semanticLocation.locationName
-            )
-            location_time_array.append(wrapped_location)
-        else:
+            ))
+            continue
 
+        # A single report that cannot be decrypted should not hide all the others
+        try:
             encrypted_location = loc.geoLocation.encryptedReport.encryptedLocation
             public_key_random = loc.geoLocation.encryptedReport.publicKeyRandom
 
@@ -114,47 +110,55 @@ def decrypt_location_response_locations(device_update_protobuf):
                 time_offset = 0 if is_mcu else loc.geoLocation.deviceTimeOffset
                 decrypted_location = decrypt(identity_key, encrypted_location, public_key_random, time_offset)
 
-            wrapped_location = WrappedLocation(
-                decrypted_location=decrypted_location,
-                time=int(time.seconds),
-                accuracy=loc.geoLocation.accuracy,
-                status=loc.status,
-                is_own_report=loc.geoLocation.encryptedReport.isOwnReport,
-                name=""
-            )
-            location_time_array.append(wrapped_location)
+            proto_loc = DeviceUpdate_pb2.Location()
+            proto_loc.ParseFromString(decrypted_location)
+        except Exception as e:
+            print(f"[DecryptLocations] Skipping a location report that could not be decrypted: {e}")
+            continue
+
+        records.append(LocationRecord(
+            time=int(time.seconds),
+            status=loc.status,
+            is_own_report=loc.geoLocation.encryptedReport.isOwnReport,
+            latitude=proto_loc.latitude / 1e7,
+            longitude=proto_loc.longitude / 1e7,
+            altitude=proto_loc.altitude,
+            accuracy=round(loc.geoLocation.accuracy, 1),
+        ))
+
+    records.sort(key=lambda record: record.time, reverse=True)
+    return records
+
+
+def decrypt_location_response_locations(device_update_protobuf):
+
+    records = decrypt_location_records(device_update_protobuf)
 
     print("-" * 40)
     print("[DecryptLocations] Decrypted Locations:")
 
-    if not location_time_array:
+    if not records:
         print("No locations found.")
         return
 
-    for loc in location_time_array:
+    for loc in records:
 
-        if loc.status == Common_pb2.Status.SEMANTIC:
+        if loc.is_semantic:
             print(f"Semantic Location: {loc.name}")
 
         else:
-            proto_loc = DeviceUpdate_pb2.Location()
-            proto_loc.ParseFromString(loc.decrypted_location)
+            print(f"Latitude: {loc.latitude}")
+            print(f"Longitude: {loc.longitude}")
+            print(f"Altitude: {loc.altitude}")
+            print(f"Accuracy: {loc.accuracy} m")
+            print(f"Google Maps Link: {create_google_maps_link(loc.latitude, loc.longitude)}")
 
-            latitude = proto_loc.latitude / 1e7
-            longitude = proto_loc.longitude / 1e7
-            altitude = proto_loc.altitude
-
-            print(f"Latitude: {latitude}")
-            print(f"Longitude: {longitude}")
-            print(f"Altitude: {altitude}")
-            print(f"Google Maps Link: {create_google_maps_link(latitude, longitude)}")
-            
         print(f"Time: {datetime.datetime.fromtimestamp(loc.time).strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"Status: {loc.status}")
+        print(f"Status: {loc.status_name}")
         print(f"Is Own Report: {loc.is_own_report}")
         print("-" * 40)
 
-    pass
+    return records
 
 
 if __name__ == '__main__':

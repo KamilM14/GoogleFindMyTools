@@ -3,7 +3,11 @@
 /.idea
 /DULT/OwnerLookup/Results
 /Auth/secrets.json
+/Auth/secrets.json.tmp
 /example_data.json
+/TagManager/tag_data.json*
+/exports/
+__pycache__/
 
 # Created by https://www.toptal.com/developers/gitignore/api/macos,xcode,swift,swiftpackagemanager,objective-c
 # Edit at https://www.toptal.com/developers/gitignore?templates=macos,xcode,swift,swiftpackagemanager,objective-c

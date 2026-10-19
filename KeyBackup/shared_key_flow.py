@@ -3,6 +3,9 @@
 #  Copyright © 2024 Leon Böttger. All rights reserved.
 #
 
+import json
+
+from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as ec
 
@@ -42,34 +45,38 @@ def request_shared_key_flow():
         driver.execute_script(script)
 
         while True:
-            # Check for alerts indicating JavaScript calls
+            # Check for alerts indicating JavaScript calls.
+            # Only a timeout means "no alert yet" - any other error (e.g. the browser window
+            # was closed) used to be swallowed as well, which made this loop spin forever.
             try:
                 WebDriverWait(driver, 0.5).until(ec.alert_is_present())
-                alert = driver.switch_to.alert
-                message = alert.text
-                alert.accept()
+            except TimeoutException:
+                continue
 
-                # Parse the alert message
-                import json
+            alert = driver.switch_to.alert
+            message = alert.text
+            alert.accept()
+
+            # Parse the alert message
+            try:
                 data = json.loads(message)
+            except json.JSONDecodeError:
+                continue
 
-                if data['method'] == 'setVaultSharedKeys':
-                    shared_key = get_fmdn_shared_key(data['vaultKeys'])
-                    print("[SharedKeyFlow] Received Shared Key.")
-                    driver.quit()
-                    return shared_key.hex()
-                elif data['method'] == 'closeView':
-                    print("[SharedKeyFlow] closeView() called. Closing browser.")
-                    driver.quit()
-                    break
-
-            except Exception:
-                pass
+            if data.get('method') == 'setVaultSharedKeys':
+                shared_key = get_fmdn_shared_key(data['vaultKeys'])
+                print("[SharedKeyFlow] Received Shared Key.")
+                return shared_key.hex()
+            elif data.get('method') == 'closeView':
+                print("[SharedKeyFlow] closeView() called. Closing browser.")
+                break
 
     except Exception as e:
         print(f"An error occurred: {e}")
     finally:
         driver.quit()
+
+    raise RuntimeError("[SharedKeyFlow] The shared key could not be retrieved. Please run the script again and complete the login in Chrome.")
 
 
 if __name__ == "__main__":

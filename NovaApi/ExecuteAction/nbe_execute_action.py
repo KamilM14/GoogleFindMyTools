@@ -11,7 +11,12 @@ from ProtoDecoders import DeviceUpdate_pb2
 # Generate a random, but fixed client ID for request identification for this session
 client_id = generate_random_uuid()
 
-def create_action_request(canonic_device_id, gcm_registration_id, request_uuid = generate_random_uuid(), fmd_client_uuid = client_id):
+def create_action_request(canonic_device_id, gcm_registration_id, request_uuid = None, fmd_client_uuid = client_id):
+    # A default of generate_random_uuid() would be evaluated only once at import time,
+    # so every request without an explicit UUID would share the same one.
+    if request_uuid is None:
+        request_uuid = generate_random_uuid()
+
     action_request = DeviceUpdate_pb2.ExecuteActionRequest()
 
     action_request.scope.type = DeviceUpdate_pb2.DeviceType.SPOT_DEVICE

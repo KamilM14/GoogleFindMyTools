@@ -50,10 +50,20 @@ class FcmReceiver:
 
     def register_for_location_updates(self, callback):
 
+        self.location_update_callbacks.append(callback)
+
+        return self.get_fcm_token()
+
+
+    def unregister_for_location_updates(self, callback):
+        if callback in self.location_update_callbacks:
+            self.location_update_callbacks.remove(callback)
+
+
+    def get_fcm_token(self):
+
         if not self._listening:
             self._start_listener_in_background()
-
-        self.location_update_callbacks.append(callback)
 
         return self.credentials['fcm']['registration']['token']
 
@@ -87,8 +97,12 @@ class FcmReceiver:
             # Convert to hex string
             hex_string = binascii.hexlify(decoded_bytes).decode('utf-8')
 
-            for callback in self.location_update_callbacks:
-                callback(hex_string)
+            # Iterate over a copy, callbacks may unregister themselves while being called
+            for callback in list(self.location_update_callbacks):
+                try:
+                    callback(hex_string)
+                except Exception as e:
+                    print(f"[FCMReceiver] Error while handling notification: {e}")
         else:
             print("[FCMReceiver] Payload not found in the notification.")
 
