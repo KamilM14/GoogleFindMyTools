@@ -48,6 +48,7 @@ def retrieve_identity_key(device_registration: DeviceRegistration) -> bytes:
 
     try:
         identity_key = decrypt_eik(owner_key, encrypted_identity_key)
+        print("EIK_HEX:", identity_key.hex())
         return identity_key
     except Exception as e:
 
