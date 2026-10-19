@@ -40,13 +40,32 @@ def create_device_list_request():
     return hex_payload
 
 
-def list_devices():
-    print("Loading...")
+def get_device_list():
     result_hex = request_device_list()
 
     device_list = parse_device_list_protobuf(result_hex)
 
     refresh_custom_trackers(device_list)
+    return device_list
+
+
+def _ask_for_selection(device_count):
+    # int() used to crash on anything but a number, and '0' silently selected the last tracker
+    while True:
+        selected_value = input("\nIf you want to see locations of a tracker, type the number of the tracker and press 'Enter'.\nIf you want to register a new ESP32- or Zephyr-based tracker, type 'r' and press 'Enter': ").strip()
+
+        if selected_value.lower() == 'r':
+            return 'r'
+
+        if selected_value.isdigit() and 1 <= int(selected_value) <= device_count:
+            return int(selected_value) - 1
+
+        print(f"Invalid input. Please type a number between 1 and {device_count}, or 'r'.")
+
+
+def list_devices():
+    print("Loading...")
+    device_list = get_device_list()
     canonic_ids = get_canonic_ids(device_list)
 
     print("")
@@ -59,13 +78,12 @@ def list_devices():
     for idx, (device_name, canonic_id) in enumerate(canonic_ids, start=1):
         print(f"{idx}. {device_name}: {canonic_id}")
 
-    selected_value = input("\nIf you want to see locations of a tracker, type the number of the tracker and press 'Enter'.\nIf you want to register a new ESP32- or Zephyr-based tracker, type 'r' and press 'Enter': ")
+    selected_idx = _ask_for_selection(len(canonic_ids))
 
-    if selected_value == 'r':
+    if selected_idx == 'r':
         print("Loading...")
         register_esp32()
     else:
-        selected_idx = int(selected_value) - 1
         selected_device_name = canonic_ids[selected_idx][0]
         selected_canonic_id = canonic_ids[selected_idx][1]
 

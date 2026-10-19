@@ -5,7 +5,7 @@
 import time
 
 from FMDNCrypto.eid_generator import ROTATION_PERIOD, generate_eid
-from NovaApi.ExecuteAction.LocateTracker.decrypt_locations import retrieve_identity_key, is_mcu_tracker
+from NovaApi.ExecuteAction.LocateTracker.decrypt_locations import retrieve_identity_key, is_mcu_tracker, IdentityKeyError
 from ProtoDecoders.DeviceUpdate_pb2 import DevicesList, UploadPrecomputedPublicKeyIdsRequest, PublicKeyIdList
 from SpotApi.CreateBleDevice.config import max_truncated_eid_seconds_server
 from SpotApi.CreateBleDevice.util import hours_to_seconds
@@ -22,13 +22,19 @@ def refresh_custom_trackers(device_list: DevicesList):
         # This is a microcontroller
         if is_mcu_tracker(device.information.deviceRegistration):
 
+            # One tracker with an undecryptable key must not stop the others from being refreshed
+            try:
+                identity_key = retrieve_identity_key(device.information.deviceRegistration)
+            except IdentityKeyError as e:
+                print(f"[UploadPrecomputedPublicKeyIds] Skipping '{device.userDefinedDeviceName}': {e}")
+                continue
+
             needs_upload = True
 
             new_truncated_ids = UploadPrecomputedPublicKeyIdsRequest.DevicePublicKeyIds()
             new_truncated_ids.pairDate = device.information.deviceRegistration.pairDate
             new_truncated_ids.canonicId.id = device.identifierInformation.canonicIds.canonicId[0].id
 
-            identity_key = retrieve_identity_key(device.information.deviceRegistration)
             next_eids = get_next_eids(identity_key, new_truncated_ids.pairDate, int(time.time() - hours_to_seconds(3)), duration_seconds=max_truncated_eid_seconds_server)
 
             for next_eid in next_eids:

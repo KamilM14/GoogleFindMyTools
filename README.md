@@ -20,6 +20,34 @@ Currently, it is possible to query Find My Device / Find Hub trackers and Androi
 - Install the latest version of Google Chrome: https://www.google.com/chrome/
 - Start the program by running [main.py](main.py): `python main.py` or `python3 main.py`
 
+### Správa tagů (interaktivní menu)
+
+`python main.py` otevře přehledné menu se seznamem tagů (název, typ, skupina, kdy a kde byl naposledy viděn).
+
+| Kde | Klávesa | Co udělá |
+|---|---|---|
+| seznam | `3` | otevře tag číslo 3 (detail, hledání, zvuk, správa) |
+| seznam | `n 3` / `p 3` | rovnou najde polohu tagu 3 / rozpípá tag 3 |
+| seznam | `klíče` | napsaná část názvu: jeden výsledek se otevře, víc se zobrazí jako filtr (diakritika nevadí) |
+| seznam | `h` · `v` · `s` · `z` · `o` | hledat · najít polohu všech zobrazených · řazení · skryté tagy · obnovit seznam |
+| detail | `n` · `p` / `t` · `h` · `e` · `m` | najít polohu · pípnout / ztišit · historie poloh · export CSV/KML · otevřít mapu |
+| detail | `j` · `g` · `k` · `f` · `s` · `x` | přezdívka · skupina · poznámka · oblíbený · skrýt · smazat historii |
+
+- Přezdívky, skupiny, poznámky, oblíbené, skryté tagy a **historie poloh** se ukládají jen lokálně do `TagManager/tag_data.json` (do Googlu se nic neposílá, soubor je v `.gitignore`).
+- Každé hledání uloží nalezené polohy do historie; v seznamu je pak vidět „naposledy viděn“ a po dalším hledání i o kolik se tag přesunul.
+- Export historie do `exports/`: CSV (Excel, Moje mapy) a KML (Google Earth, Moje mapy – body i trasa).
+- Hledání polohy má časový limit (výchozí 60 s, `--timeout`), Ctrl+C přeruší jen probíhající akci.
+
+Bez menu (např. pro skripty nebo Kasandru):
+
+```
+python main.py --list [--json]
+python main.py --locate "klíče" [--json] [--timeout 90]
+python main.py --classic          # původní jednoduché menu
+```
+
+Testy menu a správy tagů (bez sítě a bez přihlášení): `python -m unittest discover -s tests -t .`
+
 ### Authentication
 
 On the first run, an authentication sequence is executed, which requires a computer with access to Google Chrome.

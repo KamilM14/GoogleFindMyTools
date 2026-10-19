@@ -12,6 +12,12 @@ from Auth.username_provider import get_username
 from SpotApi.grpc_parser import GrpcParser
 
 
+class SpotRequestError(Exception):
+    def __init__(self, api_scope, status_code, message):
+        super().__init__(f"Spot API request '{api_scope}' failed (HTTP {status_code}): {message}")
+        self.status_code = status_code
+
+
 def spot_request(api_scope: str, payload: bytes) -> bytes:
     url = "https://spot-pa.googleapis.com/google.internal.spot.v1.SpotService/" + api_scope
     spot_oauth_token = get_spot_token(get_username())
@@ -33,8 +39,11 @@ def spot_request(api_scope: str, payload: bytes) -> bytes:
         if response.status_code == 200:
             result = GrpcParser.extract_grpc_payload(response.content)
             return result
-        else:
-            soup = BeautifulSoup(response.text, 'html.parser')
-            print("[NovaRequest] Error: ", soup.get_text())
 
-    return b''
+        soup = BeautifulSoup(response.text, 'html.parser')
+        message = soup.get_text().strip()
+        print("[SpotRequest] Error: ", message)
+
+    # Returning empty bytes here used to make callers continue with an empty response,
+    # e.g. a failed tracker registration was still reported as successful.
+    raise SpotRequestError(api_scope, response.status_code, message)

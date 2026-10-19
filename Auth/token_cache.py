@@ -47,8 +47,12 @@ def set_cached_value(name: str, value: str):
     else:
         data = {}
     data[name] = value
-    with open(secrets_file, 'w') as file:
+
+    # Write to a temporary file first, so an interrupted write cannot corrupt secrets.json
+    temp_file = secrets_file + '.tmp'
+    with open(temp_file, 'w') as file:
         json.dump(data, file)
+    os.replace(temp_file, secrets_file)
 
 
 def _get_secrets_file():

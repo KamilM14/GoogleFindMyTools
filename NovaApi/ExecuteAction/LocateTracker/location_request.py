@@ -3,7 +3,7 @@
 #  Copyright © 2024 Leon Böttger. All rights reserved.
 #
 
-import asyncio
+import threading
 import time
 
 from Auth.fcm_receiver import FcmReceiver
@@ -15,6 +15,14 @@ from NovaApi.util import generate_random_uuid
 from ProtoDecoders import DeviceUpdate_pb2
 from ProtoDecoders.decoder import parse_device_update_protobuf
 from example_data_provider import get_example_data
+
+# Trackers usually answer within a few seconds; without a limit the program used to wait forever
+DEFAULT_LOCATION_TIMEOUT_SECONDS = 60
+
+
+class LocationTimeoutError(Exception):
+    pass
+
 
 def create_location_request(canonic_device_id, fcm_registration_id, request_uuid):
 
@@ -30,31 +38,49 @@ def create_location_request(canonic_device_id, fcm_registration_id, request_uuid
     return hex_payload
 
 
-def get_location_data_for_device(canonic_device_id, name):
+def request_location_update(canonic_device_id, timeout=DEFAULT_LOCATION_TIMEOUT_SECONDS):
+    """Sends a location request and waits for the matching device update from FCM."""
 
-    print(f"[LocationRequest] Requesting location data for {name}...")
-
-    result = None
     request_uuid = generate_random_uuid()
+    received = threading.Event()
+    result = {}
 
     def handle_location_response(response):
-        nonlocal result
         device_update = parse_device_update_protobuf(response)
 
         if device_update.fcmMetadata.requestUuid == request_uuid:
-            print("[LocationRequest] Location request successful. Decrypting locations...")
-            result = parse_device_update_protobuf(response)
-            #print_device_update_protobuf(response)
+            result['device_update'] = device_update
+            received.set()
 
-    fcm_token = FcmReceiver().register_for_location_updates(handle_location_response)
+    receiver = FcmReceiver()
 
-    hex_payload = create_location_request(canonic_device_id, fcm_token, request_uuid)
-    nova_request(NOVA_ACTION_API_SCOPE, hex_payload)
+    try:
+        fcm_token = receiver.register_for_location_updates(handle_location_response)
+        hex_payload = create_location_request(canonic_device_id, fcm_token, request_uuid)
+        nova_request(NOVA_ACTION_API_SCOPE, hex_payload)
 
-    while result is None:
-        time.sleep(0.1)
+        # Wait in short steps, so Ctrl+C still works (a single long wait is not interruptible on Windows)
+        deadline = time.monotonic() + timeout
+        while not received.wait(0.2):
+            if time.monotonic() > deadline:
+                raise LocationTimeoutError(
+                    f"No response from the tracker within {timeout} seconds. "
+                    "It may be out of range of the Find My Device network. Try again later.")
+    finally:
+        # Callbacks used to stay registered forever, so every later notification was handled by all of them
+        receiver.unregister_for_location_updates(handle_location_response)
 
-    decrypt_location_response_locations(result)
+    return result['device_update']
+
+
+def get_location_data_for_device(canonic_device_id, name, timeout=DEFAULT_LOCATION_TIMEOUT_SECONDS):
+
+    print(f"[LocationRequest] Requesting location data for {name}...")
+
+    device_update = request_location_update(canonic_device_id, timeout)
+
+    print("[LocationRequest] Location request successful. Decrypting locations...")
+    return decrypt_location_response_locations(device_update)
 
 if __name__ == '__main__':
     get_location_data_for_device(get_example_data("sample_canonic_device_id"), "Test")
